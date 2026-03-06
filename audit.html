@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Links Audit</title>
+  <style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    margin: 0;
+    padding: 20px;
+    background: #f5f5f5;
+    color: #333;
+  }
+  #app {
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  h1 { margin: 0 0 4px; font-size: 1.4rem; }
+  .stats {
+    color: #666;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .controls {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .controls input[type="text"] {
+    padding: 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    width: 300px;
+  }
+  .controls select {
+    padding: 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  .controls label {
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 14px;
+  }
+  thead th {
+    background: #f0f0f0;
+    text-align: left;
+    padding: 8px 10px;
+    font-weight: 600;
+    border-bottom: 2px solid #ddd;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  thead th:hover { background: #e4e4e4; }
+  thead th.sorted-asc::after { content: " \25B2"; font-size: 10px; }
+  thead th.sorted-desc::after { content: " \25BC"; font-size: 10px; }
+  tbody tr { border-bottom: 1px solid #eee; }
+  tbody tr:hover { background: #fafafa; }
+  tbody td {
+    padding: 6px 10px;
+    vertical-align: top;
+  }
+  td.url {
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  td.desc-col {
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  a { color: #0066cc; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .tag {
+    display: inline-block;
+    background: #e8e8e8;
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-size: 12px;
+    color: #555;
+  }
+  .tag.cat-null { background: #ffe0e0; color: #a00; }
+  .tag.empty-url { background: #fff3cd; color: #856404; }
+  .tag.internal { background: #d4edda; color: #155724; }
+  .tag.has-children { background: #cce5ff; color: #004085; }
+  .tag.has-html { background: #e2d6f3; color: #4a1d8e; }
+  .result-count {
+    font-size: 13px;
+    color: #666;
+    margin-left: auto;
+  }
+  .page-header {
+    background: #e8e8e8;
+    font-weight: 600;
+  }
+  .page-header td {
+    padding: 8px 10px;
+  }
+  </style>
+</head>
+<body>
+<div id="app">
+  <h1>Links Audit</h1>
+  <div class="stats" id="stats"></div>
+  <div class="controls">
+    <input type="text" id="search" placeholder="Filter by name, URL, description...">
+    <select id="category-filter"><option value="">All Categories</option></select>
+    <select id="page-filter"><option value="">All Pages</option></select>
+    <label><input type="checkbox" id="show-flags"> Flagged only</label>
+    <label><input type="checkbox" id="group-by-page" checked> Group by page</label>
+    <span class="result-count" id="result-count"></span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th data-col="page">Page</th>
+        <th data-col="category">Category</th>
+        <th data-col="name">Name</th>
+        <th data-col="url">URL</th>
+        <th data-col="desc">Description</th>
+        <th data-col="flags">Flags</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+<script type="module">
+const resp = await fetch("index.html");
+const html = await resp.text();
+const match = html.match(/<script id="pages-data" type="application\/json">([\s\S]*?)<\/scr/);
+const pages = JSON.parse(match[1]);
+
+// Flatten into rows
+const rows = [];
+for (const page of pages) {
+  if (page.html) {
+    rows.push({ page: page.title, slug: page.slug, category: page.category, name: "(pre-formatted HTML)", url: "", desc: "", flags: flags(page, { name: "", url: "" }, true) });
+    continue;
+  }
+  if (!page.links || page.links.length === 0) {
+    rows.push({ page: page.title, slug: page.slug, category: page.category, name: "(empty page)", url: "", desc: "", flags: flags(page, { name: "", url: "" }, false, true) });
+    continue;
+  }
+  for (const link of page.links) {
+    rows.push({ page: page.title, slug: page.slug, category: page.category, name: link.name, url: link.url, desc: link.desc || "", flags: flags(page, link) });
+    if (link.children) {
+      for (const child of link.children) {
+        rows.push({ page: page.title, slug: page.slug, category: page.category, name: "  \u2514 " + child.name, url: child.url, desc: child.desc || "", flags: flags(page, child, false, false, true) });
+      }
+    }
+  }
+}
+
+function flags(page, link, isHtml = false, isEmpty = false, isChild = false) {
+  const f = [];
+  if (page.category === null) f.push("uncategorized");
+  if (!link.url && !isHtml) f.push("empty-url");
+  if (link.internal) f.push("internal");
+  if (link.children) f.push("has-children");
+  if (isHtml) f.push("has-html");
+  if (isEmpty) f.push("empty-page");
+  if (isChild) f.push("child");
+  if (link.url && link.url.startsWith("http://")) f.push("http");
+  return f;
+}
+
+// Stats
+const totalPages = pages.length;
+const totalLinks = rows.length;
+const categories = [...new Set(pages.map(p => p.category).filter(Boolean))].sort();
+const uncategorized = pages.filter(p => p.category === null).length;
+const emptyPages = pages.filter(p => !p.html && (!p.links || p.links.length === 0)).length;
+const httpLinks = rows.filter(r => r.flags.includes("http")).length;
+
+document.getElementById("stats").textContent =
+  `${totalPages} pages | ${totalLinks} rows | ${categories.length} categories | ${uncategorized} uncategorized | ${emptyPages} empty pages | ${httpLinks} http (not https) links`;
+
+// Populate filters
+const catSelect = document.getElementById("category-filter");
+categories.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; catSelect.appendChild(o); });
+const nullOpt = document.createElement("option"); nullOpt.value = "__null__"; nullOpt.textContent = "(uncategorized)"; catSelect.appendChild(nullOpt);
+
+const pageSelect = document.getElementById("page-filter");
+const pageNames = [...new Set(pages.map(p => p.title))].sort();
+pageNames.forEach(p => { const o = document.createElement("option"); o.value = p; o.textContent = p; pageSelect.appendChild(o); });
+
+// Render
+const tbody = document.getElementById("tbody");
+const searchInput = document.getElementById("search");
+const flagsCheck = document.getElementById("show-flags");
+const groupCheck = document.getElementById("group-by-page");
+
+let sortCol = null, sortDir = 1;
+
+function render() {
+  const q = searchInput.value.toLowerCase();
+  const cat = catSelect.value;
+  const pg = pageSelect.value;
+  const flaggedOnly = flagsCheck.checked;
+
+  let filtered = rows.filter(r => {
+    if (q && !(r.name.toLowerCase().includes(q) || r.url.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q) || r.page.toLowerCase().includes(q))) return false;
+    if (cat === "__null__" && r.category !== null) return false;
+    if (cat && cat !== "__null__" && r.category !== cat) return false;
+    if (pg && r.page !== pg) return false;
+    if (flaggedOnly && r.flags.length === 0) return false;
+    return true;
+  });
+
+  if (sortCol) {
+    filtered.sort((a, b) => {
+      const va = a[sortCol] ?? "";
+      const vb = b[sortCol] ?? "";
+      if (typeof va === "string") return va.localeCompare(vb) * sortDir;
+      return 0;
+    });
+  }
+
+  document.getElementById("result-count").textContent = `${filtered.length} results`;
+
+  const grouped = groupCheck.checked;
+  let lastPage = null;
+  let out = "";
+  for (const r of filtered) {
+    if (grouped && r.page !== lastPage) {
+      out += `<tr class="page-header"><td colspan="6">${esc(r.page)} <span class="tag">${esc(r.category ?? "uncategorized")}</span></td></tr>`;
+      lastPage = r.page;
+    }
+    out += `<tr>
+      <td>${grouped ? "" : esc(r.page)}</td>
+      <td>${r.category ? `<span class="tag">${esc(r.category)}</span>` : `<span class="tag cat-null">null</span>`}</td>
+      <td>${esc(r.name)}</td>
+      <td class="url">${r.url ? `<a href="${esc(r.url)}" target="_blank" title="${esc(r.url)}">${esc(r.url)}</a>` : ""}</td>
+      <td class="desc-col" title="${esc(r.desc)}">${esc(r.desc)}</td>
+      <td>${r.flags.map(f => `<span class="tag ${f === "http" ? "empty-url" : f === "uncategorized" ? "cat-null" : f === "internal" ? "internal" : f === "has-children" ? "has-children" : f === "has-html" ? "has-html" : "empty-url"}">${esc(f)}</span>`).join(" ")}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = out;
+}
+
+function esc(s) {
+  if (!s) return "";
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+searchInput.addEventListener("input", render);
+catSelect.addEventListener("change", render);
+pageSelect.addEventListener("change", render);
+flagsCheck.addEventListener("change", render);
+groupCheck.addEventListener("change", render);
+
+document.querySelectorAll("thead th").forEach(th => {
+  th.addEventListener("click", () => {
+    const col = th.dataset.col;
+    if (sortCol === col) sortDir *= -1;
+    else { sortCol = col; sortDir = 1; }
+    document.querySelectorAll("thead th").forEach(t => t.classList.remove("sorted-asc", "sorted-desc"));
+    th.classList.add(sortDir === 1 ? "sorted-asc" : "sorted-desc");
+    render();
+  });
+});
+
+render();
+</script>
+</body>
+</html>
